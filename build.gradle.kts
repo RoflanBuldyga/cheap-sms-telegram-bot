@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "1.5.10" apply false
+    kotlin("jvm") version "1.5.21"
     java
 }
 
@@ -8,10 +8,14 @@ version = "0.1"
 
 repositories {
     mavenCentral()
+    maven("https://jitpack.io")
 }
 
 dependencies {
-//    implementation(kotlin("stdlib"))
+    implementation(kotlin("stdlib"))
+
+    val ktbVersion = "1.3.8"
+    implementation("com.github.elbekD:kt-telegram-bot:${ktbVersion}")
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.6.0")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
@@ -19,4 +23,9 @@ dependencies {
 
 tasks.getByName<Test>("test") {
     useJUnitPlatform()
+}
+
+val compileKotlin: org.jetbrains.kotlin.gradle.tasks.KotlinCompile by tasks
+compileKotlin.kotlinOptions {
+    jvmTarget = "1.8"
 }
