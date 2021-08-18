@@ -1,15 +1,12 @@
 import com.elbekD.bot.Bot
 import com.elbekD.bot.feature.chain.chain
+import com.elbekD.bot.feature.chain.jumpTo
+import com.elbekD.bot.feature.chain.jumpToAndFire
 import com.elbekD.bot.types.CallbackQuery
 import com.elbekD.bot.types.InlineKeyboardButton
 import com.elbekD.bot.types.InlineKeyboardMarkup
-import com.elbekD.bot.types.ReplyKeyboard
-import roflanbuldyga.cheapsms.api.CheapSMSApi
-import roflanbuldyga.cheapsms.api.CheapSMSClient
+import roflanbuldyga.cheapsms.api.CheapSMSBlockingClient
 import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
-import java.net.HttpURLConnection
-import java.sql.Time
-import java.util.*
 import kotlin.random.Random
 
 /**
@@ -21,37 +18,40 @@ fun main() {
     val username = Config.USERNAME
     val bot = Bot.createPolling(username, token)
     val base = BaseEmulator()
-    val client: CheapSMSApi = CheapSMSClient()
+    val client = CheapSMSBlockingClient()
 
     bot.chain("/start") { msg ->
-        val text = "Привет, отправиь мне свой токен от CheapSMS"
+        val text = "Привет, отправь мне свой токен от CheapSMS"
         bot.sendMessage(msg.chat.id, text)
-    }.then { msg ->
-        val cheapsms_token = msg.text!!
+    }.then("getting_cheapsms_token") { msg ->
+        val cheapsmsToken = msg.text!!
         try {
-            client.getBalance(cheapsms_token)
+            client.getBalance(cheapsmsToken)
         } catch (ex: CheapSMSApiException) {
-            print("vfrcgbljh")
+            val text = "Токен не принят, введи рабочий, блять"
+            bot.sendMessage(msg.chat.id, text)
+            bot.jumpTo("getting_cheapsms_token", msg)
         }
 
-        val storage = base.getById(msg.chat.id) // Initialize base
-    }
-
-    bot.onCommand("/start") { msg, _ ->
-        val storage = base.getById(msg.chat.id) // Initialize base
-        val balance = getBalance()
-        val countWhoosh = getWhooshNumberCount()
+        val storage = base.getById(msg.chat.id)
+        storage.replace("token", cheapsmsToken)
+        bot.jumpToAndFire("menu_show", msg)
+    }.then("menu_show") { msg ->
+        val storage = base.getById(msg.chat.id)
+        val cheapsmsToken = storage["token"].toString()
+        val balance = getBalance(cheapsmsToken)
+        val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
         val message = bot.sendMessage(msg.chat.id, text, markup = markup)
         storage.replace("message_id", message.get().message_id)
-    }
+    }.build()
 
     fun orderNewNumberLogic(callback: CallbackQuery) {
         val number = getNumber()
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
-        val messageId = storage.get("message_id") as Int
+        val messageId = storage["message_id"] as Int
         val messageText = "Твой номер: $number\n" +
                 "Статус: ожидание СМС"
         storage.replace("current_number", number)
@@ -66,7 +66,7 @@ fun main() {
     bot.onCallbackQuery("ReOrderNumber") {callback ->
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
-        val number = storage.get("current_number").toString()
+        val number = storage["current_number"].toString()
         cancelOrderNumber(number)
 
         orderNewNumberLogic(callback)
@@ -77,8 +77,9 @@ fun main() {
         val storage = base.getById(chatId)
         val number = storage.get("current_number").toString()
         val messageId = storage.get("message_id") as Int
-        val balance = getBalance()
-        val countWhoosh = getWhooshNumberCount()
+        val cheapsmsToken = storage.get("token").toString()
+        val balance = getBalance(cheapsmsToken)
+        val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
         cancelOrderNumber(number)
@@ -89,8 +90,9 @@ fun main() {
     bot.onCallbackQuery("UpdateNumbers") {callback ->
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
-        val balance = getBalance()
-        val countWhoosh = getWhooshNumberCount()
+        val cheapsmsToken = storage.get("token").toString()
+        val balance = getBalance(cheapsmsToken)
+        val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val messageId = storage.get("message_id") as Int
         val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
@@ -125,12 +127,12 @@ fun getNumber(): String {
     return "+7$randNum"
 }
 
-fun getWhooshNumberCount(): Int {
-    return Random.nextInt(0, 5)
+fun getWhooshNumberCount(cheapsmsToken: String): Int {
+    return CheapSMSBlockingClient().getServices(cheapsmsToken).get("wh_0")!!
 }
 
-fun getBalance(): String {
-    return "5 рублей"
+fun getBalance(cheapsmsToken: String): String {
+    return "${CheapSMSBlockingClient().getBalance(cheapsmsToken)} рублей"
 }
 
 fun startText(balance: String, count: Int): String {

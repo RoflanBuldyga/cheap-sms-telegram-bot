@@ -23,6 +23,7 @@ public class BaseEmulator {
         Map<String, Object> map = new HashMap<>();
         map.put("current_number", null);
         map.put("message_id", null);
+        map.put("token", null);
         return map;
     }
 }
