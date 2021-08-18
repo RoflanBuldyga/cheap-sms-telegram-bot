@@ -4,6 +4,10 @@ import com.elbekD.bot.types.CallbackQuery
 import com.elbekD.bot.types.InlineKeyboardButton
 import com.elbekD.bot.types.InlineKeyboardMarkup
 import com.elbekD.bot.types.ReplyKeyboard
+import roflanbuldyga.cheapsms.api.CheapSMSApi
+import roflanbuldyga.cheapsms.api.CheapSMSClient
+import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
+import java.net.HttpURLConnection
 import java.sql.Time
 import java.util.*
 import kotlin.random.Random
@@ -17,6 +21,21 @@ fun main() {
     val username = Config.USERNAME
     val bot = Bot.createPolling(username, token)
     val base = BaseEmulator()
+    val client: CheapSMSApi = CheapSMSClient()
+
+    bot.chain("/start") { msg ->
+        val text = "Привет, отправиь мне свой токен от CheapSMS"
+        bot.sendMessage(msg.chat.id, text)
+    }.then { msg ->
+        val cheapsms_token = msg.text!!
+        try {
+            client.getBalance(cheapsms_token)
+        } catch (ex: CheapSMSApiException) {
+            print("vfrcgbljh")
+        }
+
+        val storage = base.getById(msg.chat.id) // Initialize base
+    }
 
     bot.onCommand("/start") { msg, _ ->
         val storage = base.getById(msg.chat.id) // Initialize base
