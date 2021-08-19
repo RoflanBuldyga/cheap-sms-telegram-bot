@@ -19,7 +19,7 @@ class CheapSMSBlockingClient(config: CheapSMSConfig = config(true)) {
     fun setStatus(apiKey: String, operationId: Long, status: ActivationStatus) =
         syncCall { setStatus(apiKey, operationId, status) }
 
-    fun getStatus(apiKey: String) = syncCall { getStatus(apiKey) }
+    fun getStatus(apiKey: String, operationId: Long) = syncCall { getStatus(apiKey, operationId) }
 
 
     private fun <R> syncCall(call: suspend CheapSMSApi.() -> R) = runBlocking(Dispatchers.Default) {

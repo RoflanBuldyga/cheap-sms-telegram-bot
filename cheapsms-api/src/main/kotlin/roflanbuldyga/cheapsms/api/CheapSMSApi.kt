@@ -17,5 +17,5 @@ interface CheapSMSApi {
 
     suspend fun setStatus(apiKey: String, operationId: Long, status: ActivationStatus): SetStatusResult
 
-    suspend fun getStatus(apiKey: String): GetStatusResult
+    suspend fun getStatus(apiKey: String, operationId: Long): GetStatusResult
 }
