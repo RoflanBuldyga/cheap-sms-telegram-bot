@@ -6,7 +6,11 @@ import com.elbekD.bot.types.CallbackQuery
 import com.elbekD.bot.types.InlineKeyboardButton
 import com.elbekD.bot.types.InlineKeyboardMarkup
 import roflanbuldyga.cheapsms.api.CheapSMSBlockingClient
+import roflanbuldyga.cheapsms.api.enums.Services
 import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
+import data.Number
+import roflanbuldyga.cheapsms.api.data.response.OperationStatus
+import roflanbuldyga.cheapsms.api.exception.CheapSMSOrderException
 import kotlin.random.Random
 
 /**
@@ -27,7 +31,7 @@ fun main() {
         val cheapsmsToken = msg.text!!
         try {
             client.getBalance(cheapsmsToken)
-        } catch (ex: CheapSMSApiException) {
+        } catch (ex: CheapSMSApiException) { // todo catch useful because exception trows again (why??????)
             val text = "Токен не принят, введи рабочий, блять"
             bot.sendMessage(msg.chat.id, text)
             bot.jumpTo("getting_cheapsms_token", msg)
@@ -47,16 +51,42 @@ fun main() {
         storage.replace("message_id", message.get().message_id)
     }.build()
 
+    fun acceptSMS(chatId: Long, number: Number) {
+        val storage = base.getById(chatId)
+        val cheapsmsToken = storage["token"].toString()
+        var time = 2*60
+        while (time > 0 && storage["current_number"] == number) {
+            Thread.sleep(1000 * 5)
+            time -= 5
+            val status = client.getStatus(cheapsmsToken, number.id)
+            if (status.status == OperationStatus.STATUS_OK) {
+                val message = bot.sendMessage(chatId, status.code!!).get()
+                storage.replace("code_message_id", message.message_id)
+                break
+            }
+        }
+    }
+
     fun orderNewNumberLogic(callback: CallbackQuery) {
-        val number = getNumber()
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
+        val cheapsmsToken = storage["token"].toString()
+        var strNumber: String
+        var number: Number? = null
+        try {
+            number = orderNumber(cheapsmsToken)
+            strNumber = number.number
+            storage.replace("current_number", number)
+        } catch (ex: CheapSMSOrderException) {
+            strNumber = ex.message!!
+        }
         val messageId = storage["message_id"] as Int
-        val messageText = "Твой номер: $number\n" +
+        val messageText = "Твой номер: ${strNumber.replace("+7", "+7 ")}\n" +
                 "Статус: ожидание СМС"
-        storage.replace("current_number", number)
         bot.editMessageText(chatId, messageId , text = messageText, markup = getReOrderKeyboard())
-        // todo need waiting sms function
+
+        if (number != null)
+            acceptSMS(chatId, number)
     }
 
     bot.onCallbackQuery("OrderNumber") {callback -> // todo enum on callback data
@@ -66,8 +96,13 @@ fun main() {
     bot.onCallbackQuery("ReOrderNumber") {callback ->
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
-        val number = storage["current_number"].toString()
-        cancelOrderNumber(number)
+        val number = storage["current_number"]
+        if (number != null) {
+            cancelOrderNumber(number as Number)
+        }
+        if (storage["code_message_id"] != null) {
+            bot.deleteMessage(chatId, storage["code_message_id"] as Int)
+        }
 
         orderNewNumberLogic(callback)
     }
@@ -75,14 +110,22 @@ fun main() {
     bot.onCallbackQuery("CancelOrderNumber") {callback ->
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
-        val number = storage.get("current_number").toString()
+
+        val number = storage.get("current_number")
         val messageId = storage.get("message_id") as Int
         val cheapsmsToken = storage.get("token").toString()
         val balance = getBalance(cheapsmsToken)
         val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
-        cancelOrderNumber(number)
+        if (number != null) {
+            cancelOrderNumber(number as Number)
+        }
+
+        // deleting code if sent
+        if (storage["code_message_id"] != null) {
+            bot.deleteMessage(chatId, storage["code_message_id"] as Int)
+        }
 
         bot.editMessageText(chatId, messageId, text = text, markup = markup)
     }
@@ -107,7 +150,7 @@ fun getUpdateKeyboard(): InlineKeyboardMarkup {
     return InlineKeyboardMarkup(listOf(listOf(InlineKeyboardButton("Обновить наличие номеров", callback_data = "UpdateNumbers"))))
 }
 
-fun cancelOrderNumber(number: String) {
+fun cancelOrderNumber(number: Number) {
     // todo заглушка
 }
 
@@ -122,13 +165,17 @@ fun getReOrderKeyboard(): InlineKeyboardMarkup {
         ))
 }
 
-fun getNumber(): String {
-    val randNum = Random.nextInt(9990000000.toInt(), 9999999999.toInt())
-    return "+7$randNum"
+fun orderNumber(cheapsmsToken: String): Number {
+    val order = CheapSMSBlockingClient().orderNumber(cheapsmsToken, Services.WHOOSH.serviceName)
+    if (order.isOk) {
+        return Number(order.number!!, order.operationId!!)
+    } else {
+        throw CheapSMSOrderException(order.failureReason!!)
+    }
 }
 
 fun getWhooshNumberCount(cheapsmsToken: String): Int {
-    return CheapSMSBlockingClient().getServices(cheapsmsToken).get("wh_0")!!
+    return CheapSMSBlockingClient().getServices(cheapsmsToken)[Services.WHOOSH.serviceName]!!
 }
 
 fun getBalance(cheapsmsToken: String): String {

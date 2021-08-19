@@ -24,6 +24,7 @@ public class BaseEmulator {
         map.put("current_number", null);
         map.put("message_id", null);
         map.put("token", null);
+        map.put("code_message_id", null);
         return map;
     }
 }

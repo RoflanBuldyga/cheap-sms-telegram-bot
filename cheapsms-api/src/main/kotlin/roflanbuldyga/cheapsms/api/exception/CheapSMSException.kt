@@ -1,6 +1,7 @@
 package roflanbuldyga.cheapsms.api.exception
 
 import roflanbuldyga.cheapsms.api.data.response.ErrorResponse
+import roflanbuldyga.cheapsms.api.data.response.OrderNumberFailureReason
 
 open class CheapSMSException : RuntimeException {
     constructor(message: String) : super(message)
@@ -16,3 +17,7 @@ class CheapSMSResponseParsingException(response: String, throwable: Throwable) :
     "An unexpected parsing error.\nresponse: $response",
     throwable
 )
+
+class CheapSMSOrderException(
+    val error: OrderNumberFailureReason
+): CheapSMSException(error.name)
