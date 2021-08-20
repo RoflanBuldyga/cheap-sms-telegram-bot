@@ -2,16 +2,16 @@ import com.elbekD.bot.Bot
 import com.elbekD.bot.feature.chain.chain
 import com.elbekD.bot.feature.chain.jumpTo
 import com.elbekD.bot.feature.chain.jumpToAndFire
-import com.elbekD.bot.types.CallbackQuery
-import com.elbekD.bot.types.InlineKeyboardButton
-import com.elbekD.bot.types.InlineKeyboardMarkup
+import com.elbekD.bot.types.*
 import roflanbuldyga.cheapsms.api.CheapSMSBlockingClient
 import roflanbuldyga.cheapsms.api.enums.Services
 import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
 import data.Number
 import roflanbuldyga.cheapsms.api.data.response.OperationStatus
 import roflanbuldyga.cheapsms.api.exception.CheapSMSOrderException
-import kotlin.random.Random
+import java.text.SimpleDateFormat
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 /**
  *
@@ -24,7 +24,23 @@ fun main() {
     val base = BaseEmulator()
     val client = CheapSMSBlockingClient()
 
+
+    val menuShowUnit: (Message)->Unit = { msg ->
+        val storage = base.getById(msg.chat.id)
+        val cheapsmsToken = storage["token"].toString()
+        val balance = getBalance(cheapsmsToken)
+        val countWhoosh = getWhooshNumberCount(cheapsmsToken)
+        val text = startText(balance, countWhoosh)
+        val markup = if (countWhoosh != 0) getMenuKeyboard() else getUpdateKeyboard()
+        val message = bot.sendMessage(msg.chat.id, text, markup = markup)
+        storage.replace("message_id", message.get().message_id)
+    }
+
     bot.chain("/start") { msg ->
+        if (isHasToken(base, msg.chat.id)) {
+            bot.jumpToAndFire("send_reply_keyboard", msg)
+            return@chain
+        }
         val text = "Привет, отправь мне свой токен от CheapSMS"
         bot.sendMessage(msg.chat.id, text)
     }.then("getting_cheapsms_token") { msg ->
@@ -35,21 +51,17 @@ fun main() {
             val text = "Токен не принят, введи рабочий, блять"
             bot.sendMessage(msg.chat.id, text)
             bot.jumpTo("getting_cheapsms_token", msg)
+            return@then
         }
 
         val storage = base.getById(msg.chat.id)
         storage.replace("token", cheapsmsToken)
+        bot.jumpToAndFire("send_reply_keyboard", msg)
+    }.then("send_reply_keyboard") { msg ->
+        bot.sendMessage(msg.chat.id, "Токен принят, Вы были заскамлены", markup = getReplyKeyboard())
         bot.jumpToAndFire("menu_show", msg)
-    }.then("menu_show") { msg ->
-        val storage = base.getById(msg.chat.id)
-        val cheapsmsToken = storage["token"].toString()
-        val balance = getBalance(cheapsmsToken)
-        val countWhoosh = getWhooshNumberCount(cheapsmsToken)
-        val text = startText(balance, countWhoosh)
-        val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
-        val message = bot.sendMessage(msg.chat.id, text, markup = markup)
-        storage.replace("message_id", message.get().message_id)
-    }.build()
+    }.then("menu_show", isTerminal = true, action = menuShowUnit).build()
+
 
     fun acceptSMS(chatId: Long, number: Number) {
         val storage = base.getById(chatId)
@@ -90,10 +102,16 @@ fun main() {
     }
 
     bot.onCallbackQuery("OrderNumber") {callback -> // todo enum on callback data
+        if (!isHasToken(base, callback.from.id.toLong())) {
+            return@onCallbackQuery
+        }
         orderNewNumberLogic(callback)
     }
 
     bot.onCallbackQuery("ReOrderNumber") {callback ->
+        if (!isHasToken(base, callback.from.id.toLong())) {
+            return@onCallbackQuery
+        }
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
         val number = storage["current_number"]
@@ -102,12 +120,16 @@ fun main() {
         }
         if (storage["code_message_id"] != null) {
             bot.deleteMessage(chatId, storage["code_message_id"] as Int)
+            storage.replace("code_message_id", null)
         }
 
         orderNewNumberLogic(callback)
     }
 
     bot.onCallbackQuery("CancelOrderNumber") {callback ->
+        if (!isHasToken(base, callback.from.id.toLong())) {
+            return@onCallbackQuery
+        }
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
 
@@ -117,7 +139,7 @@ fun main() {
         val balance = getBalance(cheapsmsToken)
         val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
-        val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
+        val markup = if (countWhoosh != 0) getMenuKeyboard() else getUpdateKeyboard()
         if (number != null) {
             cancelOrderNumber(number as Number)
         }
@@ -131,6 +153,9 @@ fun main() {
     }
 
     bot.onCallbackQuery("UpdateNumbers") {callback ->
+        if (!isHasToken(base, callback.from.id.toLong())) {
+            return@onCallbackQuery
+        }
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
         val cheapsmsToken = storage.get("token").toString()
@@ -138,12 +163,35 @@ fun main() {
         val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val messageId = storage.get("message_id") as Int
-        val markup = if (countWhoosh != 0) getOrderKeyboard() else getUpdateKeyboard()
+        val markup = if (countWhoosh != 0) getMenuKeyboard() else getUpdateKeyboard()
         bot.editMessageText(chatId, messageId, text = text, markup = markup)
     }
 
+    bot.chain("Выпилиться") {msg ->
+        val storage = base.getById(msg.chat.id)
+        storage.replace("token", null)
+        bot.sendMessage(msg.chat.id, "Уебывай", markup = getRemoveKeyboard())
+        bot.jumpToAndFire("exit", msg)
+    }.then("exit", isTerminal = true) {  }.build()
+
+    bot.chain("Отправить новое меню") {msg ->
+        menuShowUnit(msg)
+        bot.jumpToAndFire("exit", msg)
+    }.then("exit", isTerminal = true) {  }.build()
+
     bot.start()
-    print("Started")
+    print("Started\n")
+}
+
+fun getRemoveKeyboard(): ReplyKeyboardRemove {
+    return ReplyKeyboardRemove(true)
+}
+
+fun getReplyKeyboard(): ReplyKeyboardMarkup {
+    return ReplyKeyboardMarkup(listOf(
+        listOf(KeyboardButton("Выпилиться")),
+        listOf(KeyboardButton("Отправить новое меню"))
+    ), resize_keyboard = true)
 }
 
 fun getUpdateKeyboard(): InlineKeyboardMarkup {
@@ -154,8 +202,11 @@ fun cancelOrderNumber(number: Number) {
     // todo заглушка
 }
 
-fun getOrderKeyboard(): InlineKeyboardMarkup {
-    return InlineKeyboardMarkup(listOf(listOf(InlineKeyboardButton("Получить номер вуша", callback_data = "OrderNumber"))))
+fun getMenuKeyboard(): InlineKeyboardMarkup {
+    return InlineKeyboardMarkup(listOf(
+        listOf(InlineKeyboardButton("Обновить наличие номеров", callback_data = "UpdateNumbers")),
+        listOf(InlineKeyboardButton("Получить номер вуша", callback_data = "OrderNumber"))
+    ))
 }
 
 fun getReOrderKeyboard(): InlineKeyboardMarkup {
@@ -182,7 +233,13 @@ fun getBalance(cheapsmsToken: String): String {
     return "${CheapSMSBlockingClient().getBalance(cheapsmsToken)} рублей"
 }
 
+val FORMATTER = DateTimeFormatter.ofPattern("hh:mm:ss dd.MM")
 fun startText(balance: String, count: Int): String {
     return "Ваш баланс: ${balance}\n" +
-           "Осталось номеров Вуша: $count"
+           "Осталось номеров Вуша: $count\n\n" +
+           "Время обновления: ${FORMATTER.format(LocalDateTime.now())}"
+}
+
+fun isHasToken(base: BaseEmulator, id: Long): Boolean{
+    return base.getById(id)["token"] != null
 }
