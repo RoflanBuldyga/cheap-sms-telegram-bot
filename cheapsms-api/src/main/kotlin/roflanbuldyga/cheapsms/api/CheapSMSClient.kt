@@ -71,10 +71,13 @@ class CheapSMSClient(config: CheapSMSConfig = config(true)) : CheapSMSApi {
     }
 
     override suspend fun getStatus(
-        apiKey: String
+        apiKey: String,
+        operationId: Long
     ): GetStatusResult = apiCall(
         getStatusResponseParser, apiKey, GET_STATUS_ACTION
-    )
+    ) {
+        put("id", operationId.toString())
+    }
 
 
     private suspend inline fun <Response> apiCall(
