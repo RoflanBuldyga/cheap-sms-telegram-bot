@@ -13,6 +13,7 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
+    implementation(project(":cheapsms-api"))
 
     val ktbVersion = "1.3.8"
     implementation("com.github.elbekD:kt-telegram-bot:${ktbVersion}")
