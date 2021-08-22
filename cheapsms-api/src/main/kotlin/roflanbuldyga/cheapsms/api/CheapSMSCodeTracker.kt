@@ -1,31 +1,33 @@
 package roflanbuldyga.cheapsms.api
 
 import kotlinx.coroutines.*
-import roflanbuldyga.cheapsms.api.data.response.GetStatusResult
+import roflanbuldyga.cheapsms.api.data.response.ErrorResponse
 import roflanbuldyga.cheapsms.api.data.response.OperationStatus
+import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 interface CheapSMSCodeTracker {
-    fun trackOrder(apiKey: String, operationId: Long, isRetryAttempt: Boolean)
+    fun addOrder(apiKey: String, operationId: Long, isRetryAttempt: Boolean)
 
-    fun stopTrackingOrder(operationId: Long)
+    fun removeOrder(operationId: Long)
 
     interface Listener {
-        fun onCodeReceived(operationId: Long, isRetryCode: Boolean, code: String)
+        fun onCodeReceived(operationId: Long, isRetryAttempt: Boolean, code: String)
+
+        fun onErrorOccurred(operationId: Long, isRetryAttempt: Boolean, error: ErrorResponse)
 
         fun onTrackingTimeout(operationId: Long, isRetryAttempt: Boolean)
     }
 }
 
-data class TrackableOrder(
+data class TrackableOrder internal constructor(
     val apiKey: String,
     val operationId: Long,
-    val isRetryAttempt: Boolean
+    val isRetryAttempt: Boolean,
+    val expiresAt: Long
 ) : Comparable<TrackableOrder> {
-    val expiresAt: Long = System.currentTimeMillis() + CheapSMSCodeTrackerImpl.TRACKING_TIMEOUT
-
     var requestCounter: Int = 0
     var lastRequestTimestamp: Long = -1L
 
@@ -52,6 +54,15 @@ class CheapSMSCodeTrackerImpl(
 
         // 5 minutes
         const val TRACKING_TIMEOUT = 5 * 60 * 1000L
+
+        fun createTrackableOrder(
+            apiKey: String,
+            operationId: Long,
+            isRetryAttempt: Boolean
+        ) = TrackableOrder(
+            apiKey, operationId, isRetryAttempt,
+            expiresAt = System.currentTimeMillis() + TRACKING_TIMEOUT
+        )
     }
 
     var isActive = AtomicBoolean(false)
@@ -60,67 +71,71 @@ class CheapSMSCodeTrackerImpl(
     private val threadPool = (Executors.newScheduledThreadPool(1) as ScheduledThreadPoolExecutor).apply {
         removeOnCancelPolicy = true
     }
-    private val ordersQueue = PriorityBlockingQueue<TrackableOrder>()
+    private val orderQueue = PriorityBlockingQueue<TrackableOrder>()
     private var scheduledFuture = AtomicReference<ScheduledFuture<*>?>(null)
 
-    override fun trackOrder(apiKey: String, operationId: Long, isRetryAttempt: Boolean) {
-        ordersQueue.add(TrackableOrder(apiKey, operationId, isRetryAttempt))
+    override fun addOrder(apiKey: String, operationId: Long, isRetryAttempt: Boolean) {
+        orderQueue.put(createTrackableOrder(apiKey, operationId, isRetryAttempt))
 
-        if (ordersQueue.size == 1) {
+        if (!isActive.get()) {
+            isActive.set(true)
             startTracking()
         }
     }
 
-    override fun stopTrackingOrder(operationId: Long) {
-        TODO()
+    override fun removeOrder(operationId: Long) {
+        orderQueue.removeIf { it.operationId == operationId }
     }
 
     private fun startTracking() {
         isActive.set(true)
 
         scheduledFuture.set(
-            threadPool.scheduleAtFixedRate(::pullOrderStatus, 0, TASK_INTERVAL, TimeUnit.SECONDS)
+            threadPool.scheduleAtFixedRate(::track, 0, TASK_INTERVAL, TimeUnit.SECONDS)
         )
     }
 
     private fun stopTracking() {
         isActive.set(false)
 
-//        threadPool.remove(::pullOrdersStatus)
-        scheduledFuture.get()?.cancel(false)
+        scheduledFuture.getAndSet(null)?.cancel(false)
     }
 
-    private fun checkSize() {
-        if (ordersQueue.size == 0) {
-            stopTracking()
-        }
+    private fun checkSize(): Boolean = (orderQueue.isEmpty()).also { isEmpty ->
+        if (isEmpty) stopTracking()
     }
 
-    private fun pullOrderStatus() {
-        checkSize()
-
-        val order = ordersQueue.take()
+    private fun track() {
         val currentTime = System.currentTimeMillis()
 
-        if (currentTime > order.expiresAt) {
+        if (checkSize()) return
+
+        val order = orderQueue.take()
+
+        if (currentTime >= order.expiresAt) {
             // fire Listener.onTrackingTimeout
             listener.onTrackingTimeout(order.operationId, order.isRetryAttempt)
-        } else if (currentTime - order.lastRequestTimestamp > TRACKING_INTERVAL) {
+        } else if (currentTime - order.lastRequestTimestamp >= TRACKING_INTERVAL) {
             // send track request
 
             // if received a code then fire Listener.onCodeReceived
             // else add the order back to the queue
 
             scope.launch {
-                val operationStatus = apiHttpClient.getStatus(order.apiKey, order.operationId)
-                if (operationStatus.status == OperationStatus.STATUS_OK) {
-                    listener.onCodeReceived(order.operationId, order.isRetryAttempt, operationStatus.code!!)
-                } else {
-                    ordersQueue.add(order.update(currentTime))
+                try {
+                    val operationStatus = apiHttpClient.getStatus(order.apiKey, order.operationId)
+                    if (operationStatus.status == OperationStatus.STATUS_OK) {
+                        listener.onCodeReceived(order.operationId, order.isRetryAttempt, operationStatus.code!!)
+                    } else {
+                        orderQueue.add(order.update(currentTime))
+                    }
+                } catch (ex: CheapSMSApiException) {
+                    listener.onErrorOccurred(order.operationId, order.isRetryAttempt, ex.error)
                 }
             }
         } else {
-            ordersQueue.add(order)
+            // skip the order
+            orderQueue.add(order)
         }
     }
 }

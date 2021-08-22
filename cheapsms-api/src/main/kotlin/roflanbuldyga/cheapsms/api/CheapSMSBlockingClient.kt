@@ -6,7 +6,7 @@ import roflanbuldyga.cheapsms.api.data.request.ActivationStatus
 
 // залупная хуйня потому что ни либа телеграм бота, ни айдар не умеют в корутины (я тоже ыаываыа)
 class CheapSMSBlockingClient(config: CheapSMSConfig = config(true)) {
-    val client = CheapSMSClient(config)
+    val asyncClient = CheapSMSClient(config)
 
     fun getServices(apiKey: String) = syncCall { getServices(apiKey) }
 
@@ -23,6 +23,6 @@ class CheapSMSBlockingClient(config: CheapSMSConfig = config(true)) {
 
 
     private fun <R> syncCall(call: suspend CheapSMSApi.() -> R) = runBlocking(Dispatchers.Default) {
-        call.invoke(client)
+        call.invoke(asyncClient)
     }
 }
