@@ -1,4 +1,5 @@
 import com.elbekD.bot.Bot
+import com.elbekD.bot.feature.chain.ChainBuilder
 import com.elbekD.bot.feature.chain.chain
 import com.elbekD.bot.feature.chain.jumpTo
 import com.elbekD.bot.feature.chain.jumpToAndFire
@@ -7,10 +8,12 @@ import roflanbuldyga.cheapsms.api.CheapSMSBlockingClient
 import roflanbuldyga.cheapsms.api.enums.Services
 import roflanbuldyga.cheapsms.api.exception.CheapSMSApiException
 import data.Number
+import roflanbuldyga.cheapsms.api.data.request.ActivationStatus
 import roflanbuldyga.cheapsms.api.data.response.OperationStatus
+import roflanbuldyga.cheapsms.api.data.response.SetStatusResult
 import roflanbuldyga.cheapsms.api.exception.CheapSMSOrderException
-import java.text.SimpleDateFormat
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -93,12 +96,17 @@ fun main() {
             strNumber = ex.message!!
         }
         val messageId = storage["message_id"] as Int
-        val messageText = "Твой номер: ${strNumber.replace("+7", "+7 ")}\n" +
-                "Статус: ожидание СМС"
-        bot.editMessageText(chatId, messageId , text = messageText, markup = getReOrderKeyboard())
+        var messageText = "Твой номер: ${strNumber.replace("+7", "+7 ")}\n" +
+                          "Статус: ожидание СМС"
+        bot.editMessageText(chatId, messageId , text = messageText, markup = getReOrderAndCancelKeyboard())
 
-        if (number != null)
+        if (number != null) {
             acceptSMS(chatId, number)
+            if (storage["code_message_id"] != null) {
+                messageText = messageText.replace("ожидание СМС", "СМС получено")
+                bot.editMessageText(chatId, messageId , text = messageText, markup = getReOrderAndAcceptKeyboard())
+            }
+        }
     }
 
     bot.onCallbackQuery("OrderNumber") {callback -> // todo enum on callback data
@@ -115,8 +123,10 @@ fun main() {
         val chatId = callback.from.id.toLong()
         val storage = base.getById(chatId)
         val number = storage["current_number"]
-        if (number != null) {
-            cancelOrderNumber(number as Number)
+        val cheapsmsToken = storage.get("token").toString()
+        if (number != null && storage["code_message_id"] == null) {
+            val status = cancelOrderNumber(cheapsmsToken, number as Number)
+            storage.replace("current_number", null)
         }
         if (storage["code_message_id"] != null) {
             bot.deleteMessage(chatId, storage["code_message_id"] as Int)
@@ -140,13 +150,15 @@ fun main() {
         val countWhoosh = getWhooshNumberCount(cheapsmsToken)
         val text = startText(balance, countWhoosh)
         val markup = if (countWhoosh != 0) getMenuKeyboard() else getUpdateKeyboard()
-        if (number != null) {
-            cancelOrderNumber(number as Number)
+        if (number != null && storage["code_message_id"] == null) {
+            val status = cancelOrderNumber(cheapsmsToken, number as Number)
+            storage.replace("current_number", null)
         }
 
         // deleting code if sent
         if (storage["code_message_id"] != null) {
             bot.deleteMessage(chatId, storage["code_message_id"] as Int)
+            storage.replace("code_message_id", null)
         }
 
         bot.editMessageText(chatId, messageId, text = text, markup = markup)
@@ -172,15 +184,19 @@ fun main() {
         storage.replace("token", null)
         bot.sendMessage(msg.chat.id, "Уебывай", markup = getRemoveKeyboard())
         bot.jumpToAndFire("exit", msg)
-    }.then("exit", isTerminal = true) {  }.build()
+    }.exit().build()
 
     bot.chain("Отправить новое меню") {msg ->
         menuShowUnit(msg)
         bot.jumpToAndFire("exit", msg)
-    }.then("exit", isTerminal = true) {  }.build()
+    }.exit().build()
 
     bot.start()
     print("Started\n")
+}
+
+fun ChainBuilder.exit(): ChainBuilder {
+    return then("exit", isTerminal = true) {  }
 }
 
 fun getRemoveKeyboard(): ReplyKeyboardRemove {
@@ -198,8 +214,8 @@ fun getUpdateKeyboard(): InlineKeyboardMarkup {
     return InlineKeyboardMarkup(listOf(listOf(InlineKeyboardButton("Обновить наличие номеров", callback_data = "UpdateNumbers"))))
 }
 
-fun cancelOrderNumber(number: Number) {
-    // todo заглушка
+fun cancelOrderNumber(cheapsmsToken: String, number: Number): SetStatusResult {
+    return CheapSMSBlockingClient().setStatus(cheapsmsToken, number.id, ActivationStatus.CANCEL)
 }
 
 fun getMenuKeyboard(): InlineKeyboardMarkup {
@@ -209,7 +225,14 @@ fun getMenuKeyboard(): InlineKeyboardMarkup {
     ))
 }
 
-fun getReOrderKeyboard(): InlineKeyboardMarkup {
+fun getReOrderAndAcceptKeyboard(): InlineKeyboardMarkup {
+    return InlineKeyboardMarkup(listOf(
+        listOf(InlineKeyboardButton("Получить новый номер", callback_data = "ReOrderNumber")),
+        listOf(InlineKeyboardButton("Спасибо, больше не надо ❤", callback_data = "CancelOrderNumber"))
+    ))
+}
+
+fun getReOrderAndCancelKeyboard(): InlineKeyboardMarkup {
     return InlineKeyboardMarkup(listOf(
         listOf(InlineKeyboardButton("Получить новый номер", callback_data = "ReOrderNumber")),
         listOf(InlineKeyboardButton("Я передумал, отменяй заказ блять", callback_data = "CancelOrderNumber"))
@@ -233,11 +256,11 @@ fun getBalance(cheapsmsToken: String): String {
     return "${CheapSMSBlockingClient().getBalance(cheapsmsToken)} рублей"
 }
 
-val FORMATTER = DateTimeFormatter.ofPattern("hh:mm:ss dd.MM")
+val FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss dd.MM")
 fun startText(balance: String, count: Int): String {
     return "Ваш баланс: ${balance}\n" +
            "Осталось номеров Вуша: $count\n\n" +
-           "Время обновления: ${FORMATTER.format(LocalDateTime.now())}"
+           "Время обновления: ${FORMATTER.format(LocalDateTime.now(ZoneId.of("Etc/GMT+8")))}"
 }
 
 fun isHasToken(base: BaseEmulator, id: Long): Boolean{
