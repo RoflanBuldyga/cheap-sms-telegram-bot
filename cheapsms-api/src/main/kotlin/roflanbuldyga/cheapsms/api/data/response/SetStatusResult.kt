@@ -20,4 +20,9 @@ enum class SetStatusResult {
      *  активация отменена
      */
     ACCESS_CANCEL,
+
+    /**
+     * Ошибка сманы статуса еблан блять
+     */
+    BAD_CHANGE_STATUS
 }
